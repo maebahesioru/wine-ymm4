@@ -61,3 +61,63 @@ YMM4DIAG: bounds COMMANDLIST raw=(-340,-360)-(940,360)
 
 `docs/preview-hit-test-bounds.png` は X=0 で枠が画像に一致している例、
 `docs/preview-hit-test-drag.png` はドラッグ中に枠が追従している例。
+
+## 2026-10-26 追記: テキストアイテムが選択できない件
+
+画像・動画アイテムは選択できるのに **テキストアイテムだけプレビュー上でクリック選択できない**
+（選択枠も出ない）という報告への修正。
+
+YMM4 のテキストは `ID2D1DeviceContext::DrawTextLayout()` → `IDWriteTextLayout1::Draw()` の
+コールバック経由で **`ID2D1CommandList` にグリフラン（`DrawGlyphRun`）として記録**される。
+ところが記録側の境界累積（`d2d_command_list_union_rect/_point`）は矩形・ビットマップ・
+ジオメトリしか見ておらず、**グリフランは bounds に一切寄与していなかった**ため、
+テキストだけ `GetImageLocalBounds()` が空矩形 → 当たり判定クアッドが縮退していた。
+
+`command_list.c` の `d2d_command_list_draw_glyph_run()` に、グリフランから境界を累積する処理を追加:
+
+```c
+/* YMM4 fix: accumulate the bounds of text recorded into a command list ... */
+DWRITE_FONT_METRICS fm;
+float width = 0.0f, top, bottom;
+
+if (run->glyphAdvances)
+    for (i = 0; i < run->glyphCount; ++i) width += run->glyphAdvances[i];
+else
+    width = run->glyphCount * run->fontEmSize * 0.5f;
+
+memset(&fm, 0, sizeof(fm));
+if (run->fontFace)
+    IDWriteFontFace_GetMetrics(run->fontFace, &fm);   /* 戻り値は void */
+
+if (fm.designUnitsPerEm)
+{
+    float scale = run->fontEmSize / (float)fm.designUnitsPerEm;
+    top = origin.y - fm.ascent * scale;
+    bottom = origin.y + (fm.descent + fm.lineGap) * scale;
+}
+else
+{
+    top = origin.y - run->fontEmSize;
+    bottom = origin.y + run->fontEmSize * 0.25f;
+}
+
+d2d_command_list_union_point(command_list, origin.x, top);
+d2d_command_list_union_point(command_list, origin.x + width, bottom);
+```
+
+### 実測（Wine 11.20 + patched d2d1 / Xvfb :99 / YMM4 v4.56.1.1）
+
+`WINEDEBUG=+d2d` で記録されていることを確認（チャンネル名は `d2d`。`+d2d1` では出ない）:
+
+```
+trace:d2d:d2d_command_list_draw_glyph_run glyph run: 4 glyphs, origin 0.0,0.0 width 86.9, bounds y -24.8..12.3.
+```
+
+| 操作 | 修正前 | 修正後 |
+|---|---|---|
+| テキストアイテムにカーソルを乗せる | 選択枠が出ない | **文字を囲む選択枠（四隅ハンドル）が出る** |
+| テキストをクリック | 選択できない | 選択できる（パネルがテキストのプロパティに切り替わる） |
+| 2つのテキスト（Y=0 と Y=-250）を交互にクリック | — | Y=0 側→レイヤー0/Y=0.0px、Y=-250 側→レイヤー1/Y=-250.0px と正しく入れ替わる |
+
+d2d1.dll のサイズは 6,506,429 → **6,510,687 bytes**（+4,258）。テキストの描画そのものには
+影響せず、記録される bounds だけが広がる（画像・動画アイテムの挙動は不変）。

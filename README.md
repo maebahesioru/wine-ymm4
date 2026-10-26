@@ -61,6 +61,13 @@ Wine の `d2d1.dll` に不足していた Direct2D のコマンドリスト／�
 生成した `d2d1.dll` を `/opt/wine11up` と各 prefix に配備し、プレビュー描画・クリック選択・
 選択枠の追従・等倍再生を :99 で再確認している。
 
+**2026-10-26 追記（プレビューでテキストアイテムが選択できない件）**: テキストは
+`DrawTextLayout` → グリフランとしてコマンドリストに記録されるが、境界累積がグリフランを見ていなかった
+ため `GetImageLocalBounds()` が空矩形を返し、当たり判定が縮退していた。`command_list.c` の
+`d2d_command_list_draw_glyph_run()` にフォントメトリクス（ascent/descent）と advances 合計から
+bounds を累積する処理を追加。実測: テキストに選択枠が出る／クリックで選択できる／
+2つのテキストを位置で選び分けられる。詳細: [docs/preview-hit-test-bounds.md](docs/preview-hit-test-bounds.md)。
+
 **2026-10-26 追記（フォントが1件も検出されない件）**: YMM4 のフォント一覧が空になる原因は
 Wine `dwrite` の `IDWriteFontSet1::CreateFontFace()` が未実装（`E_NOTIMPL`）だったこと。
 `patches/dwrite/0001` を適用して `make -C dlls/dwrite` が rc=0 で完走することを実測し、
