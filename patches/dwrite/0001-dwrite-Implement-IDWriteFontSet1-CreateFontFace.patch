@@ -1,0 +1,35 @@
+diff --git a/dlls/dwrite/font.c b/dlls/dwrite/font.c
+index 9544784..fc9ef73 100644
+--- a/dlls/dwrite/font.c
++++ b/dlls/dwrite/font.c
+@@ -7783,9 +7783,28 @@ static HRESULT WINAPI dwritefontset1_CreateFontResource(IDWriteFontSet3 *iface,
+ 
+ static HRESULT WINAPI dwritefontset1_CreateFontFace(IDWriteFontSet3 *iface, UINT32 index, IDWriteFontFace5 **fontface)
+ {
+-    FIXME("%p, %u, %p.\n", iface, index, fontface);
++    struct dwrite_fontset *set = impl_from_IDWriteFontSet3(iface);
++    IDWriteFontFaceReference *reference;
++    HRESULT hr;
+ 
+-    return E_NOTIMPL;
++    TRACE("%p, %u, %p.\n", iface, index, fontface);
++
++    if (!fontface) return E_INVALIDARG;
++
++    *fontface = NULL;
++
++    if (index >= set->count)
++        return E_INVALIDARG;
++
++    hr = IDWriteFactory7_CreateFontFaceReference_(set->factory, set->entries[index]->file,
++            set->entries[index]->face_index, set->entries[index]->simulations, &reference);
++    if (FAILED(hr))
++        return hr;
++
++    hr = IDWriteFontFaceReference1_CreateFontFace((IDWriteFontFaceReference1 *)reference, fontface);
++    IDWriteFontFaceReference_Release(reference);
++
++    return hr;
+ }
+ 
+ static DWRITE_LOCALITY WINAPI dwritefontset1_GetFontLocality(IDWriteFontSet3 *iface, UINT32 index)

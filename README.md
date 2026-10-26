@@ -61,6 +61,23 @@ Wine の `d2d1.dll` に不足していた Direct2D のコマンドリスト／�
 生成した `d2d1.dll` を `/opt/wine11up` と各 prefix に配備し、プレビュー描画・クリック選択・
 選択枠の追従・等倍再生を :99 で再確認している。
 
+**2026-10-26 追記（フォントが1件も検出されない件）**: YMM4 のフォント一覧が空になる原因は
+Wine `dwrite` の `IDWriteFontSet1::CreateFontFace()` が未実装（`E_NOTIMPL`）だったこと。
+`patches/dwrite/0001` を適用して `make -C dlls/dwrite` が rc=0 で完走することを実測し、
+差し替え後の YMM4 で `FontSettings.json` が **692件** になることを確認した。
+詳細: [docs/font-detection-dwrite.md](docs/font-detection-dwrite.md)
+
+### `patches/dwrite/` — Wine 本体（dlls/dwrite/）に適用
+
+- `0001-dwrite-Implement-IDWriteFontSet1-CreateFontFace.patch` — **YMM4 のフォント一覧が空になる件の修正**（wine 11.20 の `font.c`）。
+  Wine の `IDWriteFontSet1::CreateFontFace()` は未実装スタブで常に `E_NOTIMPL` を返す。YMM4 は
+  `FontSettings.GetDirectWriteFontsFromFontSet()` でフォントセットを1件ずつこの関数に通して
+  family/face 名を取るため、**991件すべて失敗 → 例外を per-font で握り潰して 0 件**になり、
+  空の `SystemFonts` が保存される（エラーもログも出ない）。既存部品
+  （`IDWriteFactory7_CreateFontFaceReference_` + `IDWriteFontFaceReference1::CreateFontFace`）への
+  委譲で実装。実測: プローブの `CreateFontFace` が全件 `0x80004001` → 成功、YMM4 実機の
+  `FontSettings.json` が `SystemFonts: []` → **692件**。詳細: [docs/font-detection-dwrite.md](docs/font-detection-dwrite.md)
+
 ### `patches/winepulse/` — Wine 本体（dlls/winepulse.drv/ / dlls/winealsa.drv/）に適用
 
 - `0001-qpc-100ns-overflow.patch` — **再生が一瞬で末尾まで飛ぶ件の修正**。
