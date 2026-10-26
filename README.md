@@ -68,6 +68,14 @@ Wine の `d2d1.dll` に不足していた Direct2D のコマンドリスト／�
 bounds を累積する処理を追加。実測: テキストに選択枠が出る／クリックで選択できる／
 2つのテキストを位置で選び分けられる。詳細: [docs/preview-hit-test-bounds.md](docs/preview-hit-test-bounds.md)。
 
+**2026-10-26 追記（大きい文字サイズで一部の文字だけ欠ける件）**: コマンドリストの可変長
+グリフデータ（glyphIndices/Advances/Offsets と run_desc）を**バッファ内の絶対ポインタ**で
+保持していたため、`d2d_array_reserve()` の realloc でバッファが動くと既存コマンドの
+ポインタが無効化され、リプレイ時にグリフ ID が壊れて「一部の文字だけ微小な破片」になっていた
+（実測: 記録 `01ee 0226` → リプレイ `0000 0020`、2グリフの run だけ破損）。
+バッファ先頭からのオフセットで保持し、ストリーム時に再計算する形に修正。
+詳細: [docs/glyph-run-buffer-offsets.md](docs/glyph-run-buffer-offsets.md)
+
 **2026-10-26 追記（フォントが1件も検出されない件）**: YMM4 のフォント一覧が空になる原因は
 Wine `dwrite` の `IDWriteFontSet1::CreateFontFace()` が未実装（`E_NOTIMPL`）だったこと。
 `patches/dwrite/0001` を適用して `make -C dlls/dwrite` が rc=0 で完走することを実測し、

@@ -30,7 +30,7 @@ index c6ab60c..35cf520 100644
  
      if (!(bitmap->options & D2D1_BITMAP_OPTIONS_CANNOT_DRAW))
 diff --git a/dlls/d2d1/command_list.c b/dlls/d2d1/command_list.c
-index 6c830d2..62a7ef8 100644
+index 6c830d2..1272008 100644
 --- a/dlls/d2d1/command_list.c
 +++ b/dlls/d2d1/command_list.c
 @@ -224,6 +224,122 @@ static inline struct d2d_command_list *impl_from_ID2D1CommandList(ID2D1CommandLi
@@ -175,7 +175,31 @@ index 6c830d2..62a7ef8 100644
          switch (command->op)
          {
              case D2D_COMMAND_SET_ANTIALIAS_MODE:
-@@ -505,10 +624,15 @@ static HRESULT STDMETHODCALLTYPE d2d_command_list_Close(ID2D1CommandList *iface)
+@@ -387,7 +506,22 @@ static HRESULT STDMETHODCALLTYPE d2d_command_list_Stream(ID2D1CommandList *iface
+             case D2D_COMMAND_DRAW_GLYPH_RUN:
+             {
+                 const struct d2d_command_draw_glyph_run *c = data;
+-                hr = ID2D1CommandSink_DrawGlyphRun(sink, c->origin, &c->run, c->run_desc, c->brush, c->measuring_mode);
++                const BYTE *base = (const BYTE *)command_list->data;
++                DWRITE_GLYPH_RUN run = c->run;
++                DWRITE_GLYPH_RUN_DESCRIPTION desc, *desc_ptr = NULL;
++
++                if (run.glyphIndices) run.glyphIndices = (UINT16 *)(base + (uintptr_t)run.glyphIndices);
++                if (run.glyphAdvances) run.glyphAdvances = (FLOAT *)(base + (uintptr_t)run.glyphAdvances);
++                if (run.glyphOffsets) run.glyphOffsets = (DWRITE_GLYPH_OFFSET *)(base + (uintptr_t)run.glyphOffsets);
++                if (c->run_desc)
++                {
++                    desc = *(const DWRITE_GLYPH_RUN_DESCRIPTION *)(base + (uintptr_t)c->run_desc);
++                    if (desc.localeName) desc.localeName = (WCHAR *)(base + (uintptr_t)desc.localeName);
++                    if (desc.string) desc.string = (WCHAR *)(base + (uintptr_t)desc.string);
++                    if (desc.clusterMap) desc.clusterMap = (UINT16 *)(base + (uintptr_t)desc.clusterMap);
++                    desc_ptr = &desc;
++                }
++                hr = ID2D1CommandSink_DrawGlyphRun(sink, c->origin, &run, desc_ptr, c->brush, c->measuring_mode);
+                 break;
+             }
+             case D2D_COMMAND_DRAW_LINE:
+@@ -505,10 +639,15 @@ static HRESULT STDMETHODCALLTYPE d2d_command_list_Close(ID2D1CommandList *iface)
      FIXME("iface %p stub.\n", iface);
  
      if (command_list->state != D2D_COMMAND_LIST_STATE_OPEN)
@@ -191,7 +215,7 @@ index 6c830d2..62a7ef8 100644
      /* FIXME: reset as a target */
  
      return S_OK;
-@@ -531,6 +655,8 @@ HRESULT d2d_command_list_create(ID2D1Factory *factory, struct d2d_command_list *
+@@ -531,6 +670,8 @@ HRESULT d2d_command_list_create(ID2D1Factory *factory, struct d2d_command_list *
  
      (*command_list)->ID2D1CommandList_iface.lpVtbl = &d2d_command_list_vtbl;
      (*command_list)->refcount = 1;
@@ -200,7 +224,7 @@ index 6c830d2..62a7ef8 100644
      ID2D1Factory_AddRef((*command_list)->factory = factory);
  
      TRACE("Created command list %p.\n", *command_list);
-@@ -719,6 +845,7 @@ void d2d_command_list_set_transform(struct d2d_command_list *command_list,
+@@ -719,6 +860,7 @@ void d2d_command_list_set_transform(struct d2d_command_list *command_list,
      {
          command->c.op = D2D_COMMAND_SET_TRANSFORM;
          command->transform = *transform;
@@ -208,7 +232,7 @@ index 6c830d2..62a7ef8 100644
      }
  }
  
-@@ -727,8 +854,22 @@ void d2d_command_list_begin_draw(struct d2d_command_list *command_list,
+@@ -727,8 +869,22 @@ void d2d_command_list_begin_draw(struct d2d_command_list *command_list,
  {
      if (command_list->state != D2D_COMMAND_LIST_STATE_INITIAL)
      {
@@ -233,7 +257,7 @@ index 6c830d2..62a7ef8 100644
      }
  
      d2d_command_list_set_antialias_mode(command_list, context->drawing_state.antialiasMode);
-@@ -869,6 +1010,15 @@ void d2d_command_list_draw_rectangle(struct d2d_command_list *command_list, cons
+@@ -869,6 +1025,15 @@ void d2d_command_list_draw_rectangle(struct d2d_command_list *command_list, cons
          command->brush = brush;
          command->stroke_width = stroke_width;
          command->stroke_style = stroke_style;
@@ -249,7 +273,7 @@ index 6c830d2..62a7ef8 100644
      }
  }
  
-@@ -896,6 +1046,11 @@ void d2d_command_list_fill_geometry(struct d2d_command_list *command_list,
+@@ -896,6 +1061,11 @@ void d2d_command_list_fill_geometry(struct d2d_command_list *command_list,
          command->geometry = geometry;
          command->brush = brush;
          command->opacity_brush = opacity_brush;
@@ -261,7 +285,7 @@ index 6c830d2..62a7ef8 100644
      }
  }
  
-@@ -913,6 +1068,7 @@ void d2d_command_list_fill_rectangle(struct d2d_command_list *command_list,
+@@ -913,6 +1083,7 @@ void d2d_command_list_fill_rectangle(struct d2d_command_list *command_list,
          command->c.op = D2D_COMMAND_FILL_RECTANGLE;
          command->rect = *rect;
          command->brush = brush;
@@ -269,7 +293,41 @@ index 6c830d2..62a7ef8 100644
      }
  }
  
-@@ -980,6 +1136,42 @@ void d2d_command_list_draw_glyph_run(struct d2d_command_list *command_list,
+@@ -964,12 +1135,33 @@ static inline void d2d_command_list_write_field(BYTE **data, void *dst, const vo
+     *data = *data + size;
+ }
+ 
++/* The command data buffer is grown with d2d_array_reserve(), which may move it.
++   Storing raw pointers into it would leave them dangling after a reallocation,
++   so variable-length payloads are stored as offsets from the buffer start and
++   rebased when the command list is streamed. */
++static inline void d2d_command_list_write_field_offset(BYTE **data, void *dst, const void *src,
++        size_t size, const BYTE *base)
++{
++    void **ptr = dst;
++
++    if (!src)
++    {
++        *ptr = NULL;
++        return;
++    }
++
++    *ptr = (void *)(uintptr_t)(*data - base);
++    memcpy(*data, src, size);
++    *data = *data + size;
++}
++
+ void d2d_command_list_draw_glyph_run(struct d2d_command_list *command_list,
+         const struct d2d_device_context *context, D2D1_POINT_2F origin, const DWRITE_GLYPH_RUN *run,
+         const DWRITE_GLYPH_RUN_DESCRIPTION *run_desc, ID2D1Brush *orig_brush,
+         DWRITE_MEASURING_MODE measuring_mode)
+ {
+     struct d2d_command_draw_glyph_run *command;
++    const BYTE *base;
+     size_t size, locale_name_size = 0;
+     DWRITE_GLYPH_RUN_DESCRIPTION *d;
+     DWRITE_GLYPH_RUN *r;
+@@ -980,6 +1172,43 @@ void d2d_command_list_draw_glyph_run(struct d2d_command_list *command_list,
      if (!d2d_command_list_create_brush(command_list, context, orig_brush, &brush))
          return;
  
@@ -307,12 +365,45 @@ index 6c830d2..62a7ef8 100644
 +
 +        TRACE("glyph run: %u glyphs, origin %.1f,%.1f width %.1f, bounds y %.1f..%.1f.\n",
 +                run->glyphCount, origin.x, origin.y, width, top, bottom);
++        
 +    }
 +
      /* Set rendering parameters automatically. Explicitly set null parameters are not recorded,
         either separately or as a part of a restored state block. Forcing parameters update on
         DrawGlyphRun() ensures that state is reset correctly. */
-@@ -1072,6 +1264,19 @@ void d2d_command_list_draw_bitmap(struct d2d_command_list *command_list, ID2D1Bi
+@@ -1022,22 +1251,24 @@ void d2d_command_list_draw_glyph_run(struct d2d_command_list *command_list,
+     r->bidiLevel = run->bidiLevel;
+ 
+     data = (BYTE *)(command + 1);
++    base = (const BYTE *)command_list->data;
+ 
+-    d2d_command_list_write_field(&data, &r->glyphIndices, run->glyphIndices, glyph_count * sizeof(*r->glyphIndices));
+-    d2d_command_list_write_field(&data, &r->glyphAdvances, run->glyphAdvances, glyph_count * sizeof(*r->glyphAdvances));
+-    d2d_command_list_write_field(&data, &r->glyphOffsets, run->glyphOffsets, glyph_count * sizeof(*r->glyphOffsets));
++    d2d_command_list_write_field_offset(&data, &r->glyphIndices, run->glyphIndices, glyph_count * sizeof(*r->glyphIndices), base);
++    d2d_command_list_write_field_offset(&data, &r->glyphAdvances, run->glyphAdvances, glyph_count * sizeof(*r->glyphAdvances), base);
++    d2d_command_list_write_field_offset(&data, &r->glyphOffsets, run->glyphOffsets, glyph_count * sizeof(*r->glyphOffsets), base);
+ 
+     command->run_desc = NULL;
+     if (run_desc)
+     {
+-        d = command->run_desc = (DWRITE_GLYPH_RUN_DESCRIPTION *)data;
++        command->run_desc = (DWRITE_GLYPH_RUN_DESCRIPTION *)(uintptr_t)(data - base);
++        d = (DWRITE_GLYPH_RUN_DESCRIPTION *)data;
+         memset(d, 0, sizeof(*d));
+         data += sizeof(*d);
+ 
+-        d2d_command_list_write_field(&data, &d->localeName, run_desc->localeName, locale_name_size);
+-        d2d_command_list_write_field(&data, &d->string, run_desc->string, run_desc->stringLength * sizeof(*run_desc->string));
++        d2d_command_list_write_field_offset(&data, &d->localeName, run_desc->localeName, locale_name_size, base);
++        d2d_command_list_write_field_offset(&data, &d->string, run_desc->string, run_desc->stringLength * sizeof(*run_desc->string), base);
+         d->stringLength = run_desc->stringLength;
+-        d2d_command_list_write_field(&data, &d->clusterMap, run_desc->clusterMap, run_desc->stringLength * sizeof(*run_desc->clusterMap));
++        d2d_command_list_write_field_offset(&data, &d->clusterMap, run_desc->clusterMap, run_desc->stringLength * sizeof(*run_desc->clusterMap), base);
+         d->textPosition = run_desc->textPosition;
+     }
+ 
+@@ -1072,6 +1303,19 @@ void d2d_command_list_draw_bitmap(struct d2d_command_list *command_list, ID2D1Bi
  
          d2d_command_list_write_field(&data, &command->dst_rect, dst_rect, sizeof(*dst_rect));
          d2d_command_list_write_field(&data, &command->src_rect, src_rect, sizeof(*src_rect));
@@ -332,7 +423,7 @@ index 6c830d2..62a7ef8 100644
          d2d_command_list_write_field(&data, &command->perspective_transform, perspective_transform,
                  sizeof(*perspective_transform));
      }
-@@ -1102,6 +1307,11 @@ void d2d_command_list_draw_image(struct d2d_command_list *command_list, ID2D1Ima
+@@ -1102,6 +1346,11 @@ void d2d_command_list_draw_image(struct d2d_command_list *command_list, ID2D1Ima
  
          d2d_command_list_write_field(&data, &command->target_offset, target_offset, sizeof(*target_offset));
          d2d_command_list_write_field(&data, &command->image_rect, image_rect, sizeof(*image_rect));
@@ -391,7 +482,7 @@ index ba6cea7..304db8d 100644
  struct d2d_command_list *unsafe_impl_from_ID2D1CommandList(ID2D1CommandList *iface);
  void d2d_command_list_begin_draw(struct d2d_command_list *command_list, const struct d2d_device_context *context);
 diff --git a/dlls/d2d1/device.c b/dlls/d2d1/device.c
-index 552d6d4..0fb608a 100644
+index 552d6d4..1562b11 100644
 --- a/dlls/d2d1/device.c
 +++ b/dlls/d2d1/device.c
 @@ -18,6 +18,10 @@
@@ -933,7 +1024,12 @@ index 552d6d4..0fb608a 100644
      if (!target)
      {
          d2d_device_context_reset_target(context);
-@@ -2713,16 +3076,374 @@ static void STDMETHODCALLTYPE d2d_device_context_ID2D1DeviceContext_DrawGlyphRun
+@@ -2709,20 +3072,379 @@ static void STDMETHODCALLTYPE d2d_device_context_ID2D1DeviceContext_DrawGlyphRun
+ 
+     TRACE("iface %p, baseline_origin %s, glyph_run %p, glyph_run_desc %p, brush %p, measuring_mode %#x.\n",
+             iface, debug_d2d_point_2f(&baseline_origin), glyph_run, glyph_run_desc, brush, measuring_mode);
++    
+ 
      d2d_device_context_draw_glyph_run(context, baseline_origin, glyph_run, glyph_run_desc, brush, measuring_mode);
  }
  
@@ -1308,7 +1404,7 @@ index 552d6d4..0fb608a 100644
  
      if (FAILED(context->error.code))
          return;
-@@ -2745,12 +3466,277 @@ static void STDMETHODCALLTYPE d2d_device_context_DrawImage(ID2D1DeviceContext6 *
+@@ -2745,12 +3467,277 @@ static void STDMETHODCALLTYPE d2d_device_context_DrawImage(ID2D1DeviceContext6 *
  
      if (SUCCEEDED(ID2D1Image_QueryInterface(image, &IID_ID2D1Bitmap, (void **)&bitmap)))
      {
@@ -1587,7 +1683,7 @@ index 552d6d4..0fb608a 100644
      FIXME("Unhandled image %p.\n", image);
  }
  
-@@ -2771,6 +3757,12 @@ static void STDMETHODCALLTYPE d2d_device_context_ID2D1DeviceContext_DrawBitmap(I
+@@ -2771,6 +3758,12 @@ static void STDMETHODCALLTYPE d2d_device_context_ID2D1DeviceContext_DrawBitmap(I
              "src_rect %s, perspective_transform %p.\n",
              iface, bitmap, debug_d2d_rect_f(dst_rect), opacity, interpolation_mode,
              debug_d2d_rect_f(src_rect), perspective_transform);
