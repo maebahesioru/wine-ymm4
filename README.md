@@ -66,6 +66,20 @@ Wine `dwrite` の `IDWriteFontSet1::CreateFontFace()` が未実装（`E_NOTIMPL`
 `patches/dwrite/0001` を適用して `make -C dlls/dwrite` が rc=0 で完走することを実測し、
 差し替え後の YMM4 で `FontSettings.json` が **692件** になることを確認した。
 詳細: [docs/font-detection-dwrite.md](docs/font-detection-dwrite.md)
+**2026-10-26 追記（日本語入力の変換ウィンドウが左上に出る件）**: WPF が `ImmSetCompositionWindow` を
+呼ばないため XIM の spot が (0,0) になり、fcitx5 の入力ウィンドウが画面左上に固定されていた。
+`patches/imm32/0001` でキー入力時にカーソル位置を spot に反映するフォールバックを追加し、
+入力欄の直上に出ることを実測。詳細: [docs/ime-composition-window.md](docs/ime-composition-window.md)
+
+### `patches/imm32/` — Wine 本体（dlls/imm32/）に適用
+
+- `0001-imm32-fallback-composition-window-position.patch` — **日本語入力の変換ウィンドウが画面左上に出る件の修正**（wine 11.20 の `ime.c`）。
+  WPF アプリは `WM_IME_COMPOSITION` を受け取らないため `ImmSetCompositionWindow` を一度も呼ばず、
+  XIM の spot が (0,0) のままになって fcitx5 の入力ウィンドウが画面左上に固定される。
+  `ImeToAsciiEx()` に「アプリが composition window を設定していない場合はカーソル位置を spot にする」
+  フォールバックを追加（`ctx->fdwInit & INIT_COMPFORM` が立っているアプリ＝従来の Win32 アプリは影響なし）。
+  あわせて `HKCU\Software\Wine\X11 Driver` の `InputStyle=overthespot` を推奨。
+  実測: 入力ウィンドウが `+4+40` → 入力欄の直上（カーソル 296,998 付近）。詳細: [docs/ime-composition-window.md](docs/ime-composition-window.md)
 
 ### `patches/dwrite/` — Wine 本体（dlls/dwrite/）に適用
 

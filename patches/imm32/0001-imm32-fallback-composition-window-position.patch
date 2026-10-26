@@ -1,0 +1,45 @@
+diff --git a/dlls/imm32/ime.c b/dlls/imm32/ime.c
+index a6663d7..02b2d88 100644
+--- a/dlls/imm32/ime.c
++++ b/dlls/imm32/ime.c
+@@ -574,6 +574,31 @@ BOOL WINAPI ImeProcessKey( HIMC himc, UINT vkey, LPARAM lparam, BYTE *state )
+     return ret;
+ }
+ 
++/* Some applications (notably WPF based ones) never call ImmSetCompositionWindow, so the
++ * input method has no idea where the caret is and draws its composition window in the
++ * top-left corner of the screen. Fall back to the current cursor position in that case,
++ * which is usually where the user just clicked into the text field. */
++static void update_composition_rect( HIMC himc )
++{
++    static POINT last = {INT_MIN, INT_MIN};
++    INPUTCONTEXT *ctx;
++    POINT pt;
++    RECT rect;
++
++    if (!(ctx = ImmLockIMC( himc ))) return;
++
++    if (!(ctx->fdwInit & INIT_COMPFORM) && GetCursorPos( &pt ) && ScreenToClient( ctx->hWnd, &pt )
++            && (pt.x != last.x || pt.y != last.y))
++    {
++        last = pt;
++        SetRect( &rect, pt.x, pt.y, pt.x + 1, pt.y + 1 );
++        TRACE( "composition window not set by the app, using cursor position %d,%d\n", (int)pt.x, (int)pt.y );
++        NtUserCallTwoParam( (ULONG_PTR)ctx->hWnd, (ULONG_PTR)&rect, NtUserCallTwoParam_SetIMECompositionRect );
++    }
++
++    ImmUnlockIMC( himc );
++}
++
+ UINT WINAPI ImeToAsciiEx( UINT vkey, UINT vsc, BYTE *state, TRANSMSGLIST *msgs, UINT flags, HIMC himc )
+ {
+     COMPOSITIONSTRING *compstr;
+@@ -588,6 +613,8 @@ UINT WINAPI ImeToAsciiEx( UINT vkey, UINT vsc, BYTE *state, TRANSMSGLIST *msgs,
+ 
+     if (!is_ime_hkl( GetKeyboardLayout( 0 ) )) return 0;
+ 
++    update_composition_rect( himc );
++
+     if (!(ctx = ImmLockIMC( himc ))) return 0;
+     if (!(compstr = ImmLockIMCC( ctx->hCompStr ))) goto done;
+     size = max( compstr->dwSize, sizeof(COMPOSITIONSTRING) );
