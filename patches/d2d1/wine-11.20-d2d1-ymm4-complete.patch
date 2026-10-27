@@ -436,10 +436,10 @@ index 6c830d2..1272008 100644
  }
  
 diff --git a/dlls/d2d1/d2d1_private.h b/dlls/d2d1/d2d1_private.h
-index ba6cea7..304db8d 100644
+index ba6cea7..ab8eea0 100644
 --- a/dlls/d2d1/d2d1_private.h
 +++ b/dlls/d2d1/d2d1_private.h
-@@ -219,6 +219,14 @@ struct d2d_device_context
+@@ -219,6 +219,17 @@ struct d2d_device_context
      D2D1_RENDER_TARGET_PROPERTIES desc;
      D2D1_SIZE_U pixel_size;
      struct d2d_clip_stack clip_stack;
@@ -451,10 +451,13 @@ index ba6cea7..304db8d 100644
 +     * because the list records absolute transforms that would clobber it. */
 +    unsigned int effect_matrix_valid;
 +    D2D1_MATRIX_3X2_F effect_matrix;
++    /* YMM4: opacity of the enclosing effect chain (ColorMatrix M44), applied to
++     * brushes and bitmap draws because Wine has no real layer support. */
++    float effect_opacity;
  
      struct d2d_indexed_objects vertex_buffers;
  };
-@@ -859,6 +867,7 @@ struct d2d_effect
+@@ -859,6 +870,7 @@ struct d2d_effect
      LONG refcount;
  
      ID2D1EffectImpl *impl;
@@ -462,7 +465,7 @@ index ba6cea7..304db8d 100644
      struct d2d_effect_properties properties;
      struct d2d_effect_context *effect_context;
      struct d2d_transform_graph *graph;
-@@ -911,8 +920,18 @@ struct d2d_command_list
+@@ -911,8 +923,18 @@ struct d2d_command_list
      size_t objects_count;
      size_t objects_capacity;
      IUnknown **objects;
@@ -482,7 +485,7 @@ index ba6cea7..304db8d 100644
  struct d2d_command_list *unsafe_impl_from_ID2D1CommandList(ID2D1CommandList *iface);
  void d2d_command_list_begin_draw(struct d2d_command_list *command_list, const struct d2d_device_context *context);
 diff --git a/dlls/d2d1/device.c b/dlls/d2d1/device.c
-index 552d6d4..1562b11 100644
+index 552d6d4..81ad441 100644
 --- a/dlls/d2d1/device.c
 +++ b/dlls/d2d1/device.c
 @@ -18,6 +18,10 @@
@@ -532,7 +535,28 @@ index 552d6d4..1562b11 100644
  
      if (context->target.type == D2D_TARGET_COMMAND_LIST)
      {
-@@ -1240,7 +1259,19 @@ static void d2d_device_context_draw_bitmap(struct d2d_device_context *context, I
+@@ -794,6 +813,11 @@ static HRESULT d2d_device_context_update_ps_cb(struct d2d_device_context *contex
+         WARN("Failed to initialize colour brush buffer.\n");
+     if (!d2d_brush_fill_cb(opacity_brush, &cb_data->opacity_brush))
+         WARN("Failed to initialize opacity brush buffer.\n");
++    if (context->effect_opacity < 1.0f)
++    {
++        cb_data->colour_brush.opacity *= context->effect_opacity;
++        cb_data->opacity_brush.opacity *= context->effect_opacity;
++    }
+ 
+     ID3D11DeviceContext_Unmap(d3d_context, (ID3D11Resource *)context->ps_cb, 0);
+     ID3D11DeviceContext_Release(d3d_context);
+@@ -1226,7 +1250,7 @@ static void d2d_device_context_draw_bitmap(struct d2d_device_context *context, I
+     bitmap_brush_desc.extendModeY = D2D1_EXTEND_MODE_CLAMP;
+     bitmap_brush_desc.interpolationMode = interpolation_mode;
+ 
+-    brush_desc.opacity = opacity;
++    brush_desc.opacity = opacity * context->effect_opacity;
+     brush_desc.transform._11 = fabsf((d.right - d.left) / (s.right - s.left));
+     brush_desc.transform._21 = 0.0f;
+     brush_desc.transform._31 = min(d.left, d.right) - min(s.left, s.right) * brush_desc.transform._11;
+@@ -1240,7 +1264,19 @@ static void d2d_device_context_draw_bitmap(struct d2d_device_context *context, I
          return;
      }
  
@@ -552,7 +576,7 @@ index 552d6d4..1562b11 100644
      ID2D1Brush_Release(&brush->ID2D1Brush_iface);
  }
  
-@@ -1252,6 +1283,13 @@ static void STDMETHODCALLTYPE d2d_device_context_DrawBitmap(ID2D1DeviceContext6
+@@ -1252,6 +1288,13 @@ static void STDMETHODCALLTYPE d2d_device_context_DrawBitmap(ID2D1DeviceContext6
  
      TRACE("iface %p, bitmap %p, dst_rect %s, opacity %.8e, interpolation_mode %#x, src_rect %s.\n",
              iface, bitmap, debug_d2d_rect_f(dst_rect), opacity, interpolation_mode, debug_d2d_rect_f(src_rect));
@@ -566,7 +590,7 @@ index 552d6d4..1562b11 100644
  
      if (FAILED(context->error.code))
          return;
-@@ -1719,6 +1757,10 @@ static void STDMETHODCALLTYPE d2d_device_context_SetTransform(ID2D1DeviceContext
+@@ -1719,6 +1762,10 @@ static void STDMETHODCALLTYPE d2d_device_context_SetTransform(ID2D1DeviceContext
  
      TRACE("iface %p, transform %p.\n", iface, transform);
  
@@ -577,7 +601,7 @@ index 552d6d4..1562b11 100644
      if (context->target.type == D2D_TARGET_COMMAND_LIST)
          d2d_command_list_set_transform(context->target.command_list, transform);
  
-@@ -1927,6 +1969,11 @@ static void STDMETHODCALLTYPE d2d_device_context_PushAxisAlignedClip(ID2D1Device
+@@ -1927,6 +1974,11 @@ static void STDMETHODCALLTYPE d2d_device_context_PushAxisAlignedClip(ID2D1Device
  
      TRACE("iface %p, clip_rect %s, antialias_mode %#x.\n", iface, debug_d2d_rect_f(clip_rect), antialias_mode);
  
@@ -589,7 +613,7 @@ index 552d6d4..1562b11 100644
      if (context->target.type == D2D_TARGET_COMMAND_LIST)
          d2d_command_list_push_clip(context->target.command_list, clip_rect, antialias_mode);
  
-@@ -1958,6 +2005,9 @@ static void STDMETHODCALLTYPE d2d_device_context_PopAxisAlignedClip(ID2D1DeviceC
+@@ -1958,6 +2010,9 @@ static void STDMETHODCALLTYPE d2d_device_context_PopAxisAlignedClip(ID2D1DeviceC
  
      TRACE("iface %p.\n", iface);
  
@@ -599,7 +623,7 @@ index 552d6d4..1562b11 100644
      if (context->target.type == D2D_TARGET_COMMAND_LIST)
          d2d_command_list_pop_clip(context->target.command_list);
  
-@@ -1987,9 +2037,16 @@ static void STDMETHODCALLTYPE d2d_device_context_Clear(ID2D1DeviceContext6 *ifac
+@@ -1987,9 +2042,16 @@ static void STDMETHODCALLTYPE d2d_device_context_Clear(ID2D1DeviceContext6 *ifac
  
      if (context->target.type == D2D_TARGET_COMMAND_LIST)
      {
@@ -617,7 +641,7 @@ index 552d6d4..1562b11 100644
  
      ID3D11Device1_GetImmediateContext(context->d3d_device, &d3d_context);
  
-@@ -2059,6 +2116,8 @@ static void STDMETHODCALLTYPE d2d_device_context_BeginDraw(ID2D1DeviceContext6 *
+@@ -2059,6 +2121,8 @@ static void STDMETHODCALLTYPE d2d_device_context_BeginDraw(ID2D1DeviceContext6 *
      if (context->target.type == D2D_TARGET_COMMAND_LIST)
          d2d_command_list_begin_draw(context->target.command_list, context);
  
@@ -626,7 +650,7 @@ index 552d6d4..1562b11 100644
      memset(&context->error, 0, sizeof(context->error));
  }
  
-@@ -2072,15 +2131,114 @@ static HRESULT STDMETHODCALLTYPE d2d_device_context_EndDraw(ID2D1DeviceContext6
+@@ -2072,15 +2136,114 @@ static HRESULT STDMETHODCALLTYPE d2d_device_context_EndDraw(ID2D1DeviceContext6
  
      if (context->target.type == D2D_TARGET_COMMAND_LIST)
      {
@@ -640,8 +664,8 @@ index 552d6d4..1562b11 100644
 +            *tag2 = context->error.tag2;
 +
 +        return context->error.code;
-     }
- 
++    }
++
 +    if (0) fprintf(stderr, "YMM4DIAG: EndDraw code=%#lx\n", (unsigned long)context->error.code); fflush(stderr);
 +
 +#if 0
@@ -713,8 +737,8 @@ index 552d6d4..1562b11 100644
 +                ID2D1Bitmap_Release(dbg_bm);
 +            }
 +        }
-+    }
-+
+     }
+ 
 +#endif
      if (tag1)
          *tag1 = context->error.tag1;
@@ -743,7 +767,7 @@ index 552d6d4..1562b11 100644
      if (context->ops && context->ops->device_context_present)
      {
          if (FAILED(hr = context->ops->device_context_present(context->outer_unknown)))
-@@ -2274,6 +2432,17 @@ static HRESULT STDMETHODCALLTYPE d2d_device_context_CreateBitmapFromDxgiSurface(
+@@ -2274,6 +2437,17 @@ static HRESULT STDMETHODCALLTYPE d2d_device_context_CreateBitmapFromDxgiSurface(
      HRESULT hr;
  
      TRACE("iface %p, surface %p, desc %p, bitmap %p.\n", iface, surface, desc, bitmap);
@@ -761,7 +785,7 @@ index 552d6d4..1562b11 100644
  
      surface_options = d2d_get_bitmap_options_for_surface(surface);
  
-@@ -2304,7 +2473,10 @@ static HRESULT STDMETHODCALLTYPE d2d_device_context_CreateBitmapFromDxgiSurface(
+@@ -2304,7 +2478,10 @@ static HRESULT STDMETHODCALLTYPE d2d_device_context_CreateBitmapFromDxgiSurface(
      }
  
      if (SUCCEEDED(hr = d2d_bitmap_create_shared(context, &IID_IDXGISurface, surface, desc, &object)))
@@ -772,7 +796,7 @@ index 552d6d4..1562b11 100644
  
      return hr;
  }
-@@ -2316,7 +2488,11 @@ static HRESULT STDMETHODCALLTYPE d2d_device_context_CreateEffect(ID2D1DeviceCont
+@@ -2316,7 +2493,11 @@ static HRESULT STDMETHODCALLTYPE d2d_device_context_CreateEffect(ID2D1DeviceCont
  
      TRACE("iface %p, effect_id %s, effect %p.\n", iface, debugstr_guid(effect_id), effect);
  
@@ -785,7 +809,7 @@ index 552d6d4..1562b11 100644
  }
  
  static HRESULT STDMETHODCALLTYPE d2d_device_context_ID2D1DeviceContext_CreateGradientStopCollection(
-@@ -2420,15 +2596,82 @@ static BOOL STDMETHODCALLTYPE d2d_device_context_IsBufferPrecisionSupported(ID2D
+@@ -2420,15 +2601,82 @@ static BOOL STDMETHODCALLTYPE d2d_device_context_IsBufferPrecisionSupported(ID2D
      return !!(support & D3D11_FORMAT_SUPPORT_BUFFER);
  }
  
@@ -868,7 +892,7 @@ index 552d6d4..1562b11 100644
  
      if (SUCCEEDED(ID2D1Image_QueryInterface(image, &IID_ID2D1Bitmap, (void **)&bitmap)))
      {
-@@ -2452,24 +2695,124 @@ static HRESULT STDMETHODCALLTYPE d2d_device_context_GetImageLocalBounds(ID2D1Dev
+@@ -2452,24 +2700,124 @@ static HRESULT STDMETHODCALLTYPE d2d_device_context_GetImageLocalBounds(ID2D1Dev
                  WARN("Unknown unit mode %#x.\n", context->drawing_state.unitMode);
                  break;
          }
@@ -997,7 +1021,7 @@ index 552d6d4..1562b11 100644
  }
  
  static HRESULT STDMETHODCALLTYPE d2d_device_context_GetGlyphRunWorldBounds(ID2D1DeviceContext6 *iface,
-@@ -2568,6 +2911,26 @@ static void STDMETHODCALLTYPE d2d_device_context_SetTarget(ID2D1DeviceContext6 *
+@@ -2568,6 +2916,26 @@ static void STDMETHODCALLTYPE d2d_device_context_SetTarget(ID2D1DeviceContext6 *
  
      TRACE("iface %p, target %p.\n", iface, target);
  
@@ -1024,7 +1048,7 @@ index 552d6d4..1562b11 100644
      if (!target)
      {
          d2d_device_context_reset_target(context);
-@@ -2709,20 +3072,379 @@ static void STDMETHODCALLTYPE d2d_device_context_ID2D1DeviceContext_DrawGlyphRun
+@@ -2709,20 +3077,379 @@ static void STDMETHODCALLTYPE d2d_device_context_ID2D1DeviceContext_DrawGlyphRun
  
      TRACE("iface %p, baseline_origin %s, glyph_run %p, glyph_run_desc %p, brush %p, measuring_mode %#x.\n",
              iface, debug_d2d_point_2f(&baseline_origin), glyph_run, glyph_run_desc, brush, measuring_mode);
@@ -1404,7 +1428,7 @@ index 552d6d4..1562b11 100644
  
      if (FAILED(context->error.code))
          return;
-@@ -2745,12 +3467,277 @@ static void STDMETHODCALLTYPE d2d_device_context_DrawImage(ID2D1DeviceContext6 *
+@@ -2745,12 +3472,299 @@ static void STDMETHODCALLTYPE d2d_device_context_DrawImage(ID2D1DeviceContext6 *
  
      if (SUCCEEDED(ID2D1Image_QueryInterface(image, &IID_ID2D1Bitmap, (void **)&bitmap)))
      {
@@ -1413,7 +1437,7 @@ index 552d6d4..1562b11 100644
 +        D2D1_POINT_2F adj_off;
 +        const D2D1_POINT_2F *use_offset = target_offset;
 +        ID2D1Bitmap *target_bitmap = NULL;
- 
++
 +        if (YMM4DIAG) fprintf(stderr, "YMM4DIAG:   bitmap %p size %ux%u\n", (void *)bitmap, bsz.width, bsz.height); fflush(stderr);
 +
 +        /* YMM4 composes in a center-origin canvas space. When blitting a leaf
@@ -1492,7 +1516,7 @@ index 552d6d4..1562b11 100644
 +
 +#endif
 +        d2d_device_context_draw_bitmap(context, bitmap, NULL, 1.0f, interpolation_mode, image_rect, use_offset, NULL);
-+
+ 
 +#if 0
 +        /* YMM4 diag: solid red probe fill to test whether writes reach the target. */
 +        {
@@ -1552,6 +1576,7 @@ index 552d6d4..1562b11 100644
 +        static const CLSID clsid_2daffine = {0x6aa97485,0x6354,0x4cfc,{0x90,0x8c,0xe4,0xa7,0x4f,0x62,0xc9,0x6c}};
 +        static const CLSID clsid_3dtransform = {0xe8467b04,0xec61,0x4b8a,{0xb5,0xde,0xd4,0xd7,0x3d,0xeb,0xea,0x5a}};
 +        static const CLSID clsid_crop = {0xe23f7110,0x0e9a,0x4324,{0xaf,0x47,0x6a,0x2c,0x0c,0x46,0xf3,0x5b}};
++        static const CLSID clsid_colormatrix = {0x921f03d6,0x641c,0x47df,{0x85,0x2d,0xb4,0xbb,0x61,0x53,0xae,0x11}};
 +        ID2D1Effect *effect;
 +        if (SUCCEEDED(ID2D1Image_QueryInterface(image, &IID_ID2D1Effect, (void **)&effect)))
 +        {
@@ -1561,6 +1586,8 @@ index 552d6d4..1562b11 100644
 +            D2D1_MATRIX_3X2_F old_transform;
 +            BOOL have_transform = FALSE, have_clip = FALSE, center_compensated = FALSE;
 +            BOOL have_effect_matrix = FALSE;
++            BOOL have_opacity = FALSE;
++            float saved_opacity;
 +            D2D1_MATRIX_3X2_F effect_matrix;
 +            D2D1_MATRIX_3X2_F saved_transform;
 +            D2D1_RECT_F clip_rect;
@@ -1638,6 +1665,24 @@ index 552d6d4..1562b11 100644
 +                    }
 +                }
 +            }
++            else if (IsEqualGUID(&id, &clsid_colormatrix))
++            {
++                /* YMM4 uses a color matrix purely as an opacity multiplier (M44). */
++                D2D1_MATRIX_5X4_F matrix;
++                memset(&matrix, 0, sizeof(matrix));
++                if (SUCCEEDED(ID2D1Effect_GetValue(effect, 0 /*COLOR_MATRIX*/, D2D1_PROPERTY_TYPE_MATRIX_5X4,
++                        (BYTE *)&matrix, sizeof(matrix))))
++                {
++                    if (matrix._44 >= 0.0f && matrix._44 < 1.0f)
++                    {
++                        saved_opacity = context->effect_opacity;
++                        context->effect_opacity *= matrix._44;
++                        have_opacity = TRUE;
++                        if (YMM4DIAG) fprintf(stderr, "YMM4DIAG: colormatrix opacity %.3f (total %.3f)\n",
++                                matrix._44, context->effect_opacity); fflush(stderr);
++                    }
++                }
++            }
 +
 +            ID2D1Effect_GetInput(effect, 0, &input);
 +            if (input)
@@ -1668,6 +1713,7 @@ index 552d6d4..1562b11 100644
 +                context->effect_depth++;
 +                d2d_device_context_DrawImage(iface, input, target_offset, image_rect, interpolation_mode, composite_mode);
 +                context->effect_depth--;
++                if (have_opacity) context->effect_opacity = saved_opacity;
 +                context->effect_matrix_valid = saved_em_valid;
 +                context->effect_matrix = saved_em;
 +                ID2D1Image_Release(input);
@@ -1683,7 +1729,7 @@ index 552d6d4..1562b11 100644
      FIXME("Unhandled image %p.\n", image);
  }
  
-@@ -2771,6 +3758,12 @@ static void STDMETHODCALLTYPE d2d_device_context_ID2D1DeviceContext_DrawBitmap(I
+@@ -2771,6 +3785,12 @@ static void STDMETHODCALLTYPE d2d_device_context_ID2D1DeviceContext_DrawBitmap(I
              "src_rect %s, perspective_transform %p.\n",
              iface, bitmap, debug_d2d_rect_f(dst_rect), opacity, interpolation_mode,
              debug_d2d_rect_f(src_rect), perspective_transform);
@@ -1696,6 +1742,14 @@ index 552d6d4..1562b11 100644
  
      if (FAILED(context->error.code))
          return;
+@@ -4260,6 +5280,7 @@ static HRESULT d2d_device_context_init(struct d2d_device_context *render_target,
+     render_target->IDWriteTextRenderer_iface.lpVtbl = &d2d_text_renderer_vtbl;
+     render_target->IUnknown_iface.lpVtbl = &d2d_device_context_inner_unknown_vtbl;
+     render_target->refcount = 1;
++    render_target->effect_opacity = 1.0f;
+     ID2D1Device1_GetFactory((ID2D1Device1 *)&device->ID2D1Device6_iface, &render_target->factory);
+     render_target->device = device;
+     ID2D1Device6_AddRef(&render_target->device->ID2D1Device6_iface);
 diff --git a/dlls/d2d1/effect.c b/dlls/d2d1/effect.c
 index c298aec..b8f81f4 100644
 --- a/dlls/d2d1/effect.c

@@ -68,6 +68,14 @@ Wine の `d2d1.dll` に不足していた Direct2D のコマンドリスト／�
 bounds を累積する処理を追加。実測: テキストに選択枠が出る／クリックで選択できる／
 2つのテキストを位置で選び分けられる。詳細: [docs/preview-hit-test-bounds.md](docs/preview-hit-test-bounds.md)。
 
+**2026-10-27 追記（フェードイン／フェードアウト・不透明度が効かない件）**: YMM4 はフェードと
+不透明度を **Direct2D の ColorMatrix エフェクト（M44 = 不透明度）**で適用するが、d2d1 の
+エフェクト近似は 2DAffine / 3DTransform / Crop しか処理しておらず、ColorMatrix を無視して
+入力 0 をそのまま描いていた。コンテキストに `effect_opacity` を持たせ、ColorMatrix の M44 を
+ブラシの不透明度と `DrawBitmap` の opacity に掛ける形で修正。
+実測: 不透明度 30% のテキストが半透明になり、FadeIn=2.0 のテキストがフレーム 0 で消えて
+3 秒後に完全表示。詳細: [docs/fade-opacity-colormatrix.md](docs/fade-opacity-colormatrix.md)
+
 **2026-10-26 追記（大きい文字サイズで一部の文字だけ欠ける件）**: コマンドリストの可変長
 グリフデータ（glyphIndices/Advances/Offsets と run_desc）を**バッファ内の絶対ポインタ**で
 保持していたため、`d2d_array_reserve()` の realloc でバッファが動くと既存コマンドの
