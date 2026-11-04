@@ -1,8 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=ブルーアーカイブ
+GenericName=Blue Archive (JP)
 Comment=Mullvad VPN 有効のまま起動（netns 隔離）
 Exec=@HOME@/.local/bin/ba-launch.sh
-Icon=applications-games
-Terminal=true
+Icon=bluearchive
+Terminal=false
+StartupNotify=false
 Categories=Game;
+Keywords=Blue Archive;ブルアカ;ゲーム;

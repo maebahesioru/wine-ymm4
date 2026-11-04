@@ -1,0 +1,4 @@
+# ブルーアーカイブ: メニュー／パネルからパスワード無しで起動するための設定
+# install.sh が @TARGET_USER@ を実ユーザーに置換して /etc/sudoers.d/bluearchive (0440) に置く。
+# systemd-run 自体を許可すると任意ユニット起動（=実質 root）になるため、専用ラッパーのみ許可する。
+@TARGET_USER@ ALL=(root) NOPASSWD: /usr/local/sbin/ba-launch-root

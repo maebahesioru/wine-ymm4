@@ -330,8 +330,11 @@ SBC で動かす場合の想定ルート:
 |---|---|---|
 | `ba-netns-setup.sh` | `/usr/local/sbin/` | netns `ba` + veth + NAT + DNS（root・冪等） |
 | `ba-netns.service` | `/etc/systemd/system/` | 起動時に上記を実行 |
-| `ba-launch.sh` | `~/.local/bin/` | `sudo systemd-run` → `ip netns exec ba` → `umu-run` でゲーム起動 |
-| `bluearchive.desktop` | `~/.local/share/applications/` | メニュー登録 |
+| `ba-launch-root` | `/usr/local/sbin/` | root ラッパー: netns 準備 → 環境変数収集 → `systemd-run`（sudo NOPASSWD 対象） |
+| `ba-sudoers.in` | `/etc/sudoers.d/bluearchive` | 上記 1 本だけを NOPASSWD 許可（0440・visudo 検証つき） |
+| `ba-launch.sh` | `~/.local/bin/` | メニュー／パネルから呼ぶ入口（`sudo -n` でラッパーを叩くだけ） |
+| `bluearchive.desktop` | `~/.local/share/applications/` | メニュー登録（KDE パネルに固定可） |
+| `install.sh` / `pngcheck.py` | （その場で実行） | 設置・撤去・アイコン展開（`--dry-run` / `--uninstall`） |
 
 要点だけ:
 
@@ -345,12 +348,28 @@ SBC で動かす場合の想定ルート:
 - ランチャーの整合性チェックは改変ファイルを弾くため、ゲームは `BlueArchive.exe` を直起動する。
 - 実測: VPN（DAITA + Multihop）有効のまま、タイトル → ログイン → チュートリアル再生 →
   リソース **19,986.55MB のダウンロード完走**まで確認（2026-11-04）。
+- **メニュー／タスクバーからパスワード無しで起動**できる。`ip netns exec` は非 root で
+  `Operation not permitted` になるため root が要るが、`systemd-run` を直接 NOPASSWD にすると
+  `systemd-run --uid=0 /bin/sh` で実質 root を渡すことになるので、用途を絞ったラッパー
+  `ba-launch-root` 1 本だけを許可している。ゲーム本体は `setpriv` で元ユーザーに降りて起動。
+  設置は `sudo ./scripts/bluearchive/install.sh`（`--dry-run` / `--uninstall` あり）。
+- アイコンは同梱 `.ico` から `icotool` で取り出すが、**128/256 のエントリが壊れていて一括展開が
+  全滅する**ため、`icotool -l` の index ごとに `-i N` で回し、`pngcheck.py` で PNG 実体を
+  検証して `~/.local/share/icons/hicolor/<size>/apps/bluearchive.png` に 7 サイズ置く。
 
 ## ライセンス
 
 Wine 本体に由来するパッチのため **LGPL-2.1-or-later**（`LICENSE` / `COPYING.LIB` 参照）。
 
 ## 更新履歴
+
+- **2026-11-05**: **ブルーアーカイブをメニュー／KDE パネルからワンクリック起動できるようにした**。
+  入口 `~/.local/bin/ba-launch.sh` → root ラッパー `/usr/local/sbin/ba-launch-root`
+  （sudoers で 1 本だけ NOPASSWD）→ `ip netns exec ba` → `setpriv` → `umu-run` の 3 層構成。
+  `install.sh` に `--dry-run` / `--uninstall` / アイコン展開（`icotool` を index 単位で回し
+  `pngcheck.py` で実体検証）を追加。`sudo ./install.sh` の `HOME=/root` でメニューに出ない罠を
+  `SUDO_USER` 解決 + `install -o/-g` で修正。両パネルに固定してクリック起動を実測。
+  詳細は [docs/bluearchive-linux.md](docs/bluearchive-linux.md) の「メニュー／タスクバーからの起動」節。
 
 - **2026-11-04 (2)**: **ブルーアーカイブ PC 版の netns 隔離一式を追加**（`scripts/bluearchive/`・
   [docs/bluearchive-linux.md](docs/bluearchive-linux.md)）。XIGNCODE NEO が

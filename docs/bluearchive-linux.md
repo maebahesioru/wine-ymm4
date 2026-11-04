@@ -126,3 +126,85 @@ kdotool search --name Security   # 空なら初期化失敗モーダルは出て
   モーダルの OK は `xdotool key Return`。
 - **操作後はマウス位置と元のアクティブ窓を復元する**。
 - netns の nft テーブルをゲーム稼働中に作り直すと DL が止まる（ゲーム自体は落ちない）。
+
+## メニュー／タスクバーからの起動（root ラッパー + NOPASSWD）
+
+パネルやアプリメニューのアイコンから**パスワード無しで**起動できるようにするための構成。
+3 層に分かれているのがポイント。
+
+| 層 | 実体 | 権限 | 役割 |
+|---|---|---|---|
+| 入口 | `~/.local/bin/ba-launch.sh` | ユーザー | `.desktop` の Exec。`sudo -n` でラッパーを叩くだけ |
+| ラッパー | `/usr/local/sbin/ba-launch-root` | root | netns 準備 → 環境変数収集 → `systemd-run` |
+| 実行 | `ip netns exec ba` → `setpriv` → `umu-run` | ユーザーに降格 | ゲーム本体 |
+
+### なぜ root が要るのか / なぜ systemd-run を直接許可しないのか
+
+- `ip netns exec` は**非 root だと `Operation not permitted`**。「sudoers で `/usr/bin/ip` を
+  許可」でも動くが、`ip` は netns 削除やルート削除もできてしまうので範囲が広すぎる。
+- いっぽう `systemd-run` を直接 NOPASSWD にすると、`systemd-run --uid=0 /bin/sh` で
+  **任意のコマンドを root で起動できてしまう**（＝実質 root 付与）。
+- そこで **用途を絞ったラッパー 1 本だけ**を NOPASSWD にする:
+
+```
+maebahesioru ALL=(root) NOPASSWD: /usr/local/sbin/ba-launch-root
+```
+
+ラッパーは `SUDO_USER` を検証し、netns `ba` が無ければ `ba-netns-setup.sh` を実行し、
+`systemctl --user show-environment` から `DISPLAY` / `WAYLAND_DISPLAY` / `XAUTHORITY` /
+`XDG_RUNTIME_DIR` を拾って `systemd-run` へ渡す。**すでに起動中なら exit 3**。
+`--dry-run` を付けると実行するコマンド行だけを表示する（sudoers の検証に便利）。
+
+### 設置・撤去
+
+```bash
+sudo ./scripts/bluearchive/install.sh --dry-run   # 何が入るか確認
+sudo ./scripts/bluearchive/install.sh             # 設置（冪等）
+sudo ./scripts/bluearchive/install.sh --uninstall # 撤去
+```
+
+入るもの: `/usr/local/sbin/{ba-netns-setup.sh,ba-launch-root}` /
+`/etc/systemd/system/ba-netns.service`（enable）/ `/etc/sudoers.d/bluearchive`（0440・visudo 検証つき）/
+`~/.local/bin/ba-launch.sh` / `~/.local/share/applications/bluearchive.desktop` /
+`~/.local/share/icons/hicolor/<size>/apps/bluearchive.png`（7 サイズ）。
+
+- `sudo ./install.sh` だと `HOME=/root` になるため、**`SUDO_USER` からユーザーとホームを解決**して
+  `install -o/-g` で実ユーザー所有にしている（そのままだとメニューに出ない）。
+- netns が既にあるときは `systemctl start ba-netns.service` を**実行しない**
+  （稼働中に nft を作り直すとダウンロードが止まるため）。
+
+### アイコンの取り出し（壊れたエントリの罠）
+
+同梱の `.ico`（ランチャー exe の `RT_GROUP_ICON`）は **128/256 のエントリが壊れていて、
+`icotool -x` の一括展開が `incorrect total size of bitmap (2088 specified; 67624 real)` で全滅する**。
+
+```bash
+icotool -l BlueArchive_JP_Gamelauncher.exe_14_1.ico     # index=1..7（16/24/32/48/64/72/96）
+icotool -x -i 7 -o /tmp/i7 BlueArchive_JP_Gamelauncher.exe_14_1.ico   # 1 枚ずつ
+```
+
+さらに **`icotool` は壊れたエントリがあると rc=1 を返すが PNG は生成している**ので、
+戻り値ではなく生成物の有無で判定する。`install.sh` は `pngcheck.py`（PNG 署名・IDAT の
+zlib 展開・IEND 到達・正方形 16〜512px）で実体検証してから設置する。
+
+### KDE パネルへの固定
+
+1. アプリメニューから起動し、タスクバーに出たアイコンを右クリック → 「タスクマネージャーに固定」。
+2. 設定ファイル直編集なら `~/.config/plasma-org.kde.plasma.desktop-appletsrc` の
+   `launchers=` 行の末尾に `,applications:bluearchive.desktop` を追記。
+   **plasmashell を停止してから編集し、起動し直す**（起動中の編集は上書きされる）。
+
+## トラブルシュート（メニュー起動まわり）
+
+- **パスワードを聞かれる / 何も起きない**: `/etc/sudoers.d/bluearchive` が無いか、
+  `sudo -n true` が失敗している。`sudo -n /usr/local/sbin/ba-launch-root --dry-run` で
+  パスワード無しに通れば NOPASSWD は効いている。
+- **メニューに 2 つ以上「ブルーアーカイブ」が出る**: `~/.local/share/applications/` に古い
+  `.desktop` が残っている。**`applications` 配下のサブディレクトリも走査される**ので、
+  退避先は `applications` の外（例: `~/.local/share/bluearchive-desktop-backup/`）にする。
+  確認は `kbuildsycoca6 --menutest | grep -A2 '^ゲーム'`。
+- **アイコンが砂嵐になる**: 壊れた `.ico` エントリを展開してしまっている。`icotool -l` で
+  出る index だけを使い、未知サイズは削除して `gtk-update-icon-cache -f -t` と
+  `kbuildsycoca6 --noincremental` を回す。
+- **Terminal=true にしていた場合**: 端末が開いて `sudo` の対話入力ができるので、
+  NOPASSWD が未設定でもその場でパスワードを入れられる（既定は `Terminal=false`）。

@@ -1,0 +1,70 @@
+#!/bin/bash
+# ブルーアーカイブ(JP) root 側ランチャー — sudo NOPASSWD 用の単一エントリポイント
+# 役割: netns "ba" の中で、呼び出したユーザーとしてゲームを systemd-run で起動する。
+#   sudoers で許可するのは「このスクリプトだけ」。systemd-run を直接 NOPASSWD にすると
+#   任意ユニット（=実質 root）を起動できてしまうため、必ずこのラッパー経由にする。
+# 設置: /usr/local/sbin/ba-launch-root  root:root 0755
+# 終了コード: 0=起動した / 3=既に起動中 / その他=失敗
+set -euo pipefail
+
+TARGET_USER="${SUDO_USER:-}"
+if [ -z "$TARGET_USER" ] || [ "$TARGET_USER" = "root" ]; then
+  echo "ba-launch-root: sudo 経由で実行してください（実ユーザーが特定できません）" >&2
+  exit 1
+fi
+
+TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
+TARGET_UID="$(id -u "$TARGET_USER")"
+TARGET_GID="$(id -g "$TARGET_USER")"
+[ -n "$TARGET_HOME" ] && [ -d "$TARGET_HOME" ] || { echo "ba-launch-root: HOME が解決できません" >&2; exit 1; }
+
+GAME_DIR="${BA_GAME_DIR:-$TARGET_HOME/Games/DMM/drive_c/YostarGames/BlueArchive_JP}"
+WINEPREFIX_DIR="${BA_WINEPREFIX:-$TARGET_HOME/Games/DMM}"
+UMU_DATA="${BA_UMU_DATA:-$TARGET_HOME/Games/umu}"
+LAUNCHER=./xldr_BlueArchiveOnline_JP_loader_x64.exe
+GAME=./BlueArchive.exe
+NS=ba
+DRY=0
+[ "${1:-}" = "--dry-run" ] && DRY=1
+
+if pgrep -f "[B]lueArchive.exe" >/dev/null 2>&1; then
+  echo "既に起動中です（停止: sudo systemctl stop ba-game*）" >&2
+  exit 3
+fi
+
+if [ ! -e "/var/run/netns/$NS" ]; then
+  echo "netns $NS が無いので作成します" >&2
+  /usr/local/sbin/ba-netns-setup.sh
+fi
+
+# GUI 環境変数は対象ユーザーの systemd ユーザー環境から取得（XAUTHORITY はログイン毎に変わる）
+UE="$(sudo -u "$TARGET_USER" XDG_RUNTIME_DIR="/run/user/$TARGET_UID" systemctl --user show-environment 2>/dev/null || true)"
+getenv() { printf "%s\n" "$UE" | sed -n "s/^$1=//p" | head -1; }
+XA="$(getenv XAUTHORITY)"
+DISP="$(getenv DISPLAY)"
+WL="$(getenv WAYLAND_DISPLAY)"
+XR="$(getenv XDG_RUNTIME_DIR)"
+[ -n "$XA" ] || XA="$(ls -t /run/user/"$TARGET_UID"/xauth_* 2>/dev/null | head -1 || true)"
+[ -n "$DISP" ] || DISP=":0"
+[ -n "$WL" ] || WL="wayland-1"
+[ -n "$XR" ] || XR="/run/user/$TARGET_UID"
+
+UNIT="ba-game$(date +%H%M%S)"
+CMD=(/usr/bin/systemd-run --unit="$UNIT" --collect --property=Type=simple
+  --setenv=HOME="$TARGET_HOME" --setenv=USER="$TARGET_USER" --setenv=LOGNAME="$TARGET_USER"
+  --setenv=DISPLAY="$DISP" --setenv=WAYLAND_DISPLAY="$WL" --setenv=XDG_RUNTIME_DIR="$XR"
+  --setenv=XAUTHORITY="$XA"
+  --setenv=WINEPREFIX="$WINEPREFIX_DIR" --setenv=UMU_DATA_PATH="$UMU_DATA" --setenv=UMU_LOG=1
+  --working-directory="$GAME_DIR"
+  /usr/bin/ip netns exec "$NS" /usr/bin/setpriv --reuid="$TARGET_UID" --regid="$TARGET_GID" --init-groups
+  /usr/bin/umu-run "$LAUNCHER" "$GAME")
+
+if [ "$DRY" = 1 ]; then
+  echo "UNIT=$UNIT"
+  echo "XAUTHORITY=$XA"
+  printf "CMD: %q " "${CMD[@]}"; echo
+  exit 0
+fi
+
+"${CMD[@]}"
+echo "起動しました: $UNIT（停止: sudo systemctl stop $UNIT）"
