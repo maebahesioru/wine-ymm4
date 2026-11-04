@@ -316,12 +316,52 @@ SBC で動かす場合の想定ルート:
   発生しません**（2026-10-18 修正・実測確認済み）。未適用ビルドでは、ダイアログを閉じて
   続行して問題ありません（64bit アプリには実害なし）。
 
+## ブルーアーカイブ（PC 版）を Linux で動かす
+
+本リポジトリの VP9 MFT / 共有テクスチャ修正は、もともと **ブルーアーカイブ PC 版
+（Yostar ランチャー + Unity）が Wine 上で黒画面のまま固まる件**の調査から生まれたもの。
+そのうえで、ゲーム側のアンチチート（XIGNCODE NEO）が **Mullvad VPN を有効にすると必ず落ちる**
+問題に対して、**VPN の設定を一切変更せずに**専用 netns へ隔離して回避する構成を採っている。
+
+- 手順と切り分けの全記録: [docs/bluearchive-linux.md](docs/bluearchive-linux.md)
+- 一式のスクリプト: `scripts/bluearchive/`（`sudo ./scripts/bluearchive/install.sh` で設置・冪等）
+
+| ファイル | 設置先 | 役割 |
+|---|---|---|
+| `ba-netns-setup.sh` | `/usr/local/sbin/` | netns `ba` + veth + NAT + DNS（root・冪等） |
+| `ba-netns.service` | `/etc/systemd/system/` | 起動時に上記を実行 |
+| `ba-launch.sh` | `~/.local/bin/` | `sudo systemd-run` → `ip netns exec ba` → `umu-run` でゲーム起動 |
+| `bluearchive.desktop` | `~/.local/share/applications/` | メニュー登録 |
+
+要点だけ:
+
+- **XIGNCODE 0xE0191009 の原因は出口 IP ではなく `wg0` インターフェースの存在**。
+  split-tunnel（`mullvad-exclude`）では直らず、netns 隔離なら通る。
+- netns 側から Mullvad の nft を通すには split-tunnel マーク
+  （`meta mark 0x6d6f6c65` / `ct mark 0xf41`）が必要。加えて libvirt の
+  `FORWARD` drop を `iptables -I FORWARD ... -j ACCEPT` で外さないと **TCP だけ静かに落ちる**。
+- `XAUTHORITY` はログインごとに `/run/user/1000/xauth_XXXXXX` へ変わるので、
+  `systemctl --user show-environment` から拾って渡す。
+- ランチャーの整合性チェックは改変ファイルを弾くため、ゲームは `BlueArchive.exe` を直起動する。
+- 実測: VPN（DAITA + Multihop）有効のまま、タイトル → ログイン → チュートリアル再生 →
+  リソース **19,986.55MB のダウンロード完走**まで確認（2026-11-04）。
+
 ## ライセンス
 
 Wine 本体に由来するパッチのため **LGPL-2.1-or-later**（`LICENSE` / `COPYING.LIB` 参照）。
 
 ## 更新履歴
 
+- **2026-11-04 (2)**: **ブルーアーカイブ PC 版の netns 隔離一式を追加**（`scripts/bluearchive/`・
+  [docs/bluearchive-linux.md](docs/bluearchive-linux.md)）。XIGNCODE NEO が
+  `0xE0191009` で「セキュリティモジュールの初期化に失敗しました」を出す件を、
+  **Mullvad の DAITA / Multihop / PQ を有効のまま**専用 netns への隔離で解決した。
+  切り分け: VPN OFF なら通る／ON だと 2〜18 分で失敗／東京出口でも再現＝出口 IP・ASN 説は否定／
+  `mullvad-exclude` の split-tunnel では直らない（Wine の socket が wg 側のまま）＝
+  真因は `wg0` インターフェースの存在。netns へ入れると `xm.exe` は 0 件、
+  タイトル → ログイン → チュートリアル再生 → **19,986.55MB の DL 完走**を実測。
+  詰まりどころ（Mullvad の nft を通す mark、libvirt の FORWARD drop、ログインごとに変わる
+  `XAUTHORITY`、root 必須の `ip netns exec`）も docs に記録した。
 - **2026-11-04**: **Media Foundation の VP9 デコーダ MFT を追加**（`patches/winegstreamer/0001`）＋
   **D3D11 共有テクスチャの 3 点修正**（`patches/mfplat/0001`・`0002`、`patches/mfreadwrite/0001`）。
   Unity 製ゲーム（ブルーアーカイブ PC 版）が VP9 動画で

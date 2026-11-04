@@ -1,0 +1,13 @@
+[Unit]
+Description=BlueArchive netns (isolation from Mullvad tunnel)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/ba-netns-setup.sh
+ExecStop=-/usr/bin/ip netns delete ba
+
+[Install]
+WantedBy=multi-user.target
