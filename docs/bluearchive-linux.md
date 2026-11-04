@@ -50,6 +50,11 @@ sudo ./scripts/bluearchive/install.sh          # 設置
 sudo ./scripts/bluearchive/install.sh --uninstall
 ```
 
+`sudo` 経由で呼ぶと `HOME=/root` になるので、設置先は **`SUDO_USER` のホーム**から解決している
+（`/root/.local` に入って「メニューに出ない」事故を防ぐ）。`-o/-g` で所有者も実ユーザーに合わせる。
+netns が未作成のときだけ `ba-netns.service` を開始し、**既にある場合は触らない**
+（稼働中に nft を作り直すとダウンロードが止まるため）。
+
 ゲーム本体の場所が既定（`~/Games/DMM/drive_c/YostarGames/BlueArchive_JP`）と違う場合は
 `ba-launch.sh` の `GAME_DIR` を書き換える。
 
