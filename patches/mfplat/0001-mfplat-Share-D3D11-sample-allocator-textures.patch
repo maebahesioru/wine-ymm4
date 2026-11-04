@@ -1,0 +1,18 @@
+diff --git a/dlls/mfplat/sample.c b/dlls/mfplat/sample.c
+index a03e91e..1eae065 100644
+--- a/dlls/mfplat/sample.c
++++ b/dlls/mfplat/sample.c
+@@ -1476,6 +1476,13 @@ static HRESULT sample_allocator_initialize(struct sample_allocator *allocator, u
+             allocator->frame_desc.miscflags |= D3D11_RESOURCE_MISC_SHARED;
+     }
+ 
++    /* Windows creates shareable textures by default when a DXGI device manager
++     * is used, so that samples can be opened on another device, e.g. by the
++     * Unity video player. Shared flags are only valid for default usage. */
++    if (allocator->frame_desc.usage == D3D11_USAGE_DEFAULT
++            && !(allocator->frame_desc.miscflags & (D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX)))
++        allocator->frame_desc.miscflags |= D3D11_RESOURCE_MISC_SHARED;
++
+     sample_allocator_set_media_type(allocator, media_type);
+     sample_allocator_set_attributes(allocator, attributes);
+ 

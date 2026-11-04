@@ -1,0 +1,39 @@
+diff --git a/dlls/mfreadwrite/reader.c b/dlls/mfreadwrite/reader.c
+index a8a065d..07e5292 100644
+--- a/dlls/mfreadwrite/reader.c
++++ b/dlls/mfreadwrite/reader.c
+@@ -1239,6 +1239,25 @@ static struct stream_response * media_stream_detach_response(struct source_reade
+     return response;
+ }
+ 
++static BOOL source_reader_sample_has_dxgi_buffer(IMFSample *sample)
++{
++    IMFMediaBuffer *buffer;
++    IMFDXGIBuffer *dxgi_buffer;
++    HRESULT hr;
++
++    if (FAILED(hr = IMFSample_GetBufferByIndex(sample, 0, &buffer)))
++        return FALSE;
++
++    hr = IMFMediaBuffer_QueryInterface(buffer, &IID_IMFDXGIBuffer, (void **)&dxgi_buffer);
++    IMFMediaBuffer_Release(buffer);
++
++    if (FAILED(hr))
++        return FALSE;
++
++    IMFDXGIBuffer_Release(dxgi_buffer);
++    return TRUE;
++}
++
+ static struct stream_response *media_stream_pop_response(struct source_reader *reader, struct media_stream *stream)
+ {
+     struct stream_response *response;
+@@ -1253,7 +1272,7 @@ static struct stream_response *media_stream_pop_response(struct source_reader *r
+         if (!stream && response->stream_index < reader->stream_count)
+             stream = &reader->streams[response->stream_index];
+ 
+-        if (response->sample && stream->allocator)
++        if (response->sample && stream->allocator && !source_reader_sample_has_dxgi_buffer(response->sample))
+         {
+             /* Return allocation error to the caller, while keeping original response sample in for later. */
+             if (SUCCEEDED(hr = IMFVideoSampleAllocatorEx_AllocateSample(stream->allocator, &sample)))

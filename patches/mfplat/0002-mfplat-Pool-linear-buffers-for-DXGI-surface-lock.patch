@@ -1,0 +1,74 @@
+diff --git a/dlls/mfplat/buffer.c b/dlls/mfplat/buffer.c
+index 0ab7cd0..0efcbc0 100644
+--- a/dlls/mfplat/buffer.c
++++ b/dlls/mfplat/buffer.c
+@@ -971,6 +971,51 @@ static HRESULT WINAPI dxgi_1d_2d_buffer_QueryInterface(IMFMediaBuffer *iface, RE
+     return S_OK;
+ }
+ 
++#define LINEAR_POOL_SIZE 4
++static SRWLOCK linear_pool_lock = SRWLOCK_INIT;
++static struct { BYTE *ptr; DWORD size; } linear_pool[LINEAR_POOL_SIZE];
++
++static BYTE *linear_pool_alloc(DWORD size)
++{
++    BYTE *ptr = NULL;
++    unsigned int i;
++
++    AcquireSRWLockExclusive(&linear_pool_lock);
++    for (i = 0; i < ARRAY_SIZE(linear_pool); ++i)
++    {
++        if (linear_pool[i].ptr && linear_pool[i].size == size)
++        {
++            ptr = linear_pool[i].ptr;
++            linear_pool[i].ptr = NULL;
++            break;
++        }
++    }
++    ReleaseSRWLockExclusive(&linear_pool_lock);
++
++    return ptr ? ptr : malloc(size);
++}
++
++static void linear_pool_free(BYTE *ptr, DWORD size)
++{
++    BYTE *old = ptr;
++    unsigned int i;
++
++    AcquireSRWLockExclusive(&linear_pool_lock);
++    for (i = 0; i < ARRAY_SIZE(linear_pool); ++i)
++    {
++        if (!linear_pool[i].ptr)
++            break;
++    }
++    if (i == ARRAY_SIZE(linear_pool))
++        i = 0;
++    old = linear_pool[i].ptr;
++    linear_pool[i].ptr = ptr;
++    linear_pool[i].size = size;
++    ReleaseSRWLockExclusive(&linear_pool_lock);
++
++    free(old);
++}
++
+ static HRESULT dxgi_surface_buffer_create_readback_texture(struct buffer *buffer)
+ {
+     D3D11_TEXTURE2D_DESC texture_desc;
+@@ -1064,7 +1109,7 @@ static HRESULT WINAPI dxgi_surface_buffer_Lock(IMFMediaBuffer *iface, BYTE **dat
+         hr = MF_E_INVALIDREQUEST;
+     else if (!buffer->_2d.linear_buffer)
+     {
+-        if (!(buffer->_2d.linear_buffer = malloc(buffer->_2d.plane_size)))
++        if (!(buffer->_2d.linear_buffer = linear_pool_alloc(buffer->_2d.plane_size)))
+             hr = E_OUTOFMEMORY;
+ 
+         if (SUCCEEDED(hr))
+@@ -1110,7 +1155,7 @@ static HRESULT WINAPI dxgi_surface_buffer_Unlock(IMFMediaBuffer *iface)
+                 buffer->_2d.linear_buffer, buffer->_2d.width, buffer->_2d.width, buffer->_2d.height);
+         dxgi_surface_buffer_unmap(buffer, MF2DBuffer_LockFlags_ReadWrite);
+ 
+-        free(buffer->_2d.linear_buffer);
++        linear_pool_free(buffer->_2d.linear_buffer, buffer->_2d.plane_size);
+         buffer->_2d.linear_buffer = NULL;
+     }
+ 

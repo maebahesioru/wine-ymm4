@@ -1,0 +1,29 @@
+diff --git a/dlls/winegstreamer/video_decoder.c b/dlls/winegstreamer/video_decoder.c
+index ea847c2..88cae55 100644
+--- a/dlls/winegstreamer/video_decoder.c
++++ b/dlls/winegstreamer/video_decoder.c
+@@ -73,6 +73,8 @@ static const GUID *const video_decoder_output_types[] =
+     &MFVideoFormat_IYUV,
+     &MFVideoFormat_I420,
+     &MFVideoFormat_YUY2,
++    &MFVideoFormat_ARGB32,
++    &MFVideoFormat_RGB32,
+ };
+ 
+ struct video_decoder
+@@ -1814,6 +1816,7 @@ static const GUID *const iv50_decoder_output_types[] =
+     &MFVideoFormat_YUY2,
+     &MFVideoFormat_NV11,
+     &MFVideoFormat_NV12,
++    &MFVideoFormat_RGB32,
+     &MFVideoFormat_RGB24,
+     &MFVideoFormat_RGB565,
+     &MFVideoFormat_RGB555,
+@@ -1864,6 +1867,7 @@ static const GUID *const wmv_decoder_output_types[] =
+     &MFVideoFormat_UYVY,
+     &MFVideoFormat_YVYU,
+     &MFVideoFormat_NV11,
++    &MFVideoFormat_RGB32,
+     &MFVideoFormat_RGB24,
+     &MFVideoFormat_RGB565,
+     &MFVideoFormat_RGB555,

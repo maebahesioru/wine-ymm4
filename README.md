@@ -10,6 +10,12 @@ Wine の `d2d1.dll` に不足していた Direct2D のコマンドリスト／�
 このパッチを当ててビルドした `d2d1.dll` + `winex11.so` を使うと、Wine 上で
 **プレビュー表示と動画出力（mp4書き出し）の両方が正しく描画**されます。
 
+同じツリーから、Media Foundation の **VP9 デコーダ MFT** と **D3D11 共有テクスチャ**の修正も
+採録しています（`patches/winegstreamer/` / `patches/mfplat/` / `patches/mfreadwrite/`）。
+これは YMM4 専用ではなく、Unity 製アプリ（実測: ブルーアーカイブ PC 版）が Wine 上で
+VP9 動画を再生できずに黒画面で固まる問題への対処です（詳細:
+[docs/vp9-decoder-mft.md](docs/vp9-decoder-mft.md) / [docs/mf-shared-textures.md](docs/mf-shared-textures.md)）。
+
 | 検証 | 結果 |
 |---|---|
 | プレビュー窓 | 写真が中央・正色で表示（`docs/preview-after-fix.png`） |
@@ -147,6 +153,49 @@ Wine `dwrite` の `IDWriteFontSet1::CreateFontFace()` が未実装（`E_NOTIMPL`
   永久に待機し、wineboot が Wow64Install 工程で停止する問題を回避する。
   （dotnet472 等でネイティブ上書きされた古いプレフィックスを wine 11 で初回更新する時に発生。2026-10-18 修正）
 
+### `patches/winegstreamer/` — Wine 本体（dlls/winegstreamer/）に適用して winegstreamer.dll / winegstreamer.so をビルド
+
+- `0001-winegstreamer-Add-a-VP9-decoder-MFT.patch` — **Media Foundation に VP9 デコーダ MFT が無く、
+  VP9 動画を読むアプリが黒画面で固まる件の修正**。`wg_media_type.c` に VP90 → `video/x-vp9` の
+  caps 変換、`wg_format.c` に `video/x-vp9` の from/to/compare、`video_decoder.c` に
+  `vp9_decoder_create()`、`mfplat.c` に `CLSID_wg_vp9_decoder` と `class_objects[]` エントリ、
+  `main.c` に `MFTRegister()` / `MFTUnregister()` を追加する。デコード素子は caps 駆動で
+  `vp9dec` / `avdec_vp9` が自動選択される（素子名の指定は不要）。11.20 では
+  `wm_reader.c` の `get_major_type_string()` にも VP9 の case が必要（`-Werror=switch`）。
+  実測: `[VP9CodecChecker] VP9 decoders found: 0` → **2**、`WindowsVideoMedia error 0xc00d5212`
+  （`MF_E_TOPO_CODEC_NOT_FOUND`）が消滅し、タイトル動画が再生される。
+  詳細: [docs/vp9-decoder-mft.md](docs/vp9-decoder-mft.md)
+- `0002-winegstreamer-Export-ARGB32-and-RGB32-output-types.patch` — **動画デコーダの出力に
+  `ARGB32` / `RGB32` を追加**（`video_decoder_output_types[]` の 2 行）。VP9 専用ではなく
+  H.264 など既存の全デコーダに影響するため分離してある。不要ならこの 1 本だけ外してよい。
+- `0003-winegstreamer-Compatible-once-init-for-older-GLib.patch` — **古い GLib（Steam Runtime の 2.66）
+  上で `winegstreamer.so` の dlopen が失敗する件の回避**。新しい GLib ヘッダでビルドした .so は
+  `g_once_init_enter_pointer` / `g_once_init_leave_pointer` を要求するが 2.66 には無く、
+  `undefined symbol` でロードに失敗してコーデック不在と同じ結果になる。旧 API へ転送する
+  薄いラッパーを足す。**上流向けではない環境専用パッチ**。
+
+### `patches/mfplat/` — Wine 本体（dlls/mfplat/）に適用して mfplat.dll をビルド
+
+- `0001-mfplat-Share-D3D11-sample-allocator-textures.patch` — **`Got null handle from
+  IDXGIResource::GetSharedHandle.` が毎フレーム出て映像が来ない件の修正**。Unity は
+  `MF_SA_D3D11_SHARED_WITHOUT_MUTEX` でソースリーダーを開き、返却テクスチャを別デバイスから
+  `GetSharedHandle()` するが、Wine のサンプルアロケータは `D3D11_RESOURCE_MISC_SHARED` を
+  付けずにテクスチャを作るため共有ハンドルが取れない。usage が `D3D11_USAGE_DEFAULT` で
+  SHARED 系未設定なら `D3D11_RESOURCE_MISC_SHARED` を付与する。
+  原案: [FurkanDGN/wine-mfplat-shared-textures](https://github.com/FurkanDGN/wine-mfplat-shared-textures)
+- `0002-mfplat-Pool-linear-buffers-for-DXGI-surface-lock.patch` — **`dxgi_surface_buffer_Lock()` /
+  `Unlock()` の毎フレーム `malloc` / `free` を 4 スロットの固定プールに置換**（`SRWLOCK` 排他、
+  サイズ一致で再利用）。1080p サーフェスの確保・解放を再生パスから外す。
+
+### `patches/mfreadwrite/` — Wine 本体（dlls/mfreadwrite/）に適用して mfreadwrite.dll をビルド
+
+- `0001-mfreadwrite-Skip-copy-for-DXGI-sample-buffers.patch` — **DXGI バッファ付きサンプルを
+  コピーしてしまい共有テクスチャ経路から外れる件の修正**。`source_reader_sample_has_dxgi_buffer()`
+  （`GetBufferByIndex(0)` → `QueryInterface(IID_IMFDXGIBuffer)`）を追加し、
+  `media_stream_pop_response()` の二重コピー条件に加える。実測: 上記 mfplat 2 本と併用で
+  `Got null handle` の連発が消滅し、黒画面からタイトル画面まで到達
+  （詳細: [docs/mf-shared-textures.md](docs/mf-shared-textures.md)）。
+
 ## ビルド方法（wine 11.20・2026-10-17 実測手順）
 
 ```bash
@@ -273,6 +322,17 @@ Wine 本体に由来するパッチのため **LGPL-2.1-or-later**（`LICENSE` /
 
 ## 更新履歴
 
+- **2026-11-04**: **Media Foundation の VP9 デコーダ MFT を追加**（`patches/winegstreamer/0001`）＋
+  **D3D11 共有テクスチャの 3 点修正**（`patches/mfplat/0001`・`0002`、`patches/mfreadwrite/0001`）。
+  Unity 製ゲーム（ブルーアーカイブ PC 版）が VP9 動画で
+  `WindowsVideoMedia error 0xc00d5212`（`MF_E_TOPO_CODEC_NOT_FOUND`）を出して黒画面のまま
+  固まる件と、`Got null handle from IDXGIResource::GetSharedHandle.` の連発をまとめて解消した。
+  デコード素子は GStreamer の caps 駆動選択に任せるので `vp9dec` / `avdec_vp9` を名指ししない。
+  実測: `VP9 decoders found: 0` → **2**、Player.log の `0xc00d5212` と null handle が消滅し、
+  黒画面 → タイトル画面（動画再生中）まで到達。11.20 ツリーで 3 DLL のビルド rc=0、
+  パッチ 6 本の適用結果は実ファイルと **13/13 byte-identical**。
+  詳細: [docs/vp9-decoder-mft.md](docs/vp9-decoder-mft.md) /
+  [docs/mf-shared-textures.md](docs/mf-shared-textures.md)
 - **2026-10-20 (4)**: `patches/d2d1/wine-11.20-d2d1-ymm4-complete.patch` を **wine 11.20 でそのまま
   `make` が通る状態に修正**（それまでは `git apply` は通るがビルドが `-Werror` で失敗していた）。
   修正点: エフェクト登録用 XML 文字列の行末が `\\` になっていて行連結が壊れていた（29行、`\040` エラー）／

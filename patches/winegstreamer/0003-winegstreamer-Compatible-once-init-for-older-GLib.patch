@@ -1,0 +1,35 @@
+diff --git a/dlls/winegstreamer/unixlib.c b/dlls/winegstreamer/unixlib.c
+index ac671bb..3ecdeb2 100644
+--- a/dlls/winegstreamer/unixlib.c
++++ b/dlls/winegstreamer/unixlib.c
+@@ -39,6 +39,30 @@
+ 
+ #include "unix_private.h"
+ 
++/* This library is built against the host GLib headers (2.90), whose type
++ * machinery refers to g_once_init_enter_pointer() / g_once_init_leave_pointer(),
++ * but the Steam Runtime container ships GLib 2.66, where those symbols do not
++ * exist and dlopen() of this library would fail. Forward the newer entry points
++ * to the legacy ones, which are present in both versions. */
++
++#undef g_once_init_enter_pointer
++#undef g_once_init_leave_pointer
++#undef g_once_init_enter
++#undef g_once_init_leave
++
++extern gboolean g_once_init_enter(volatile void *location);
++extern void g_once_init_leave(volatile void *location, gsize result);
++
++gboolean g_once_init_enter_pointer(void *location)
++{
++    return g_once_init_enter(location);
++}
++
++void g_once_init_leave_pointer(void *location, gpointer result)
++{
++    g_once_init_leave(location, (gsize)result);
++}
++
+ /* GStreamer callbacks may be called on threads not created by Wine, and
+  * therefore cannot access the Wine TEB. This means that we must use GStreamer
+  * debug logging instead of Wine debug logging. In order to be safe we forbid
